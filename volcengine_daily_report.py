@@ -1,22 +1,36 @@
 #!/usr/bin/env python3
 """
 火山方舟每日用量报告脚本
-所有密钥通过环境变量传入，代码本身不含任何敏感信息，可安全上传 GitHub
+使用官方 volcengine SDK 处理签名，无需手动实现
+所有密钥通过环境变量传入，可安全上传 GitHub
 """
 
-import hmac
-import hashlib
 import datetime
 import json
 import time
-import requests
 import base64
+import hmac
+import hashlib
 import urllib.parse
 import os
 import sys
+import requests
 
 # ============================================================
-# 从环境变量读取配置（所有敏感信息都在 GitHub Secrets 里）
+# 依赖：pip install volcengine requests
+# ============================================================
+
+try:
+    from volcengine.base.Service import Service
+    from volcengine.ServiceInfo import ServiceInfo
+    from volcengine.ApiInfo import ApiInfo
+    from volcengine.Credentials import Credentials
+except ImportError:
+    print("❌ 请先安装: pip install volcengine")
+    sys.exit(1)
+
+# ============================================================
+# 从环境变量读取配置
 # ============================================================
 
 def require_env(key):
@@ -36,7 +50,7 @@ DINGTALK_APP_SECRET = require_env("DINGTALK_APP_SECRET")
 BITABLE_DOC_KEY  = "vy20BglGWOM2YR29C0Pzb2AZJA7depqY"
 BITABLE_SHEET_ID = "dUQiuQL"
 
-# 接入点配置（无敏感信息，可公开）
+# 接入点配置
 ENDPOINTS = {
     "ep-20260507172115-j6nd7": {"name": "Doubao-Seedream-5.0-lite", "app": "queqi_ai",  "type": "image"},
     "ep-20260430164018-qbt8h": {"name": "Seedance-2.0-fast",        "app": "queqi_ai",  "type": "video"},
@@ -49,106 +63,95 @@ ENDPOINTS = {
 }
 
 # ============================================================
-# 火山引擎 API 签名
+# 构建 Volcengine Service（官方 SDK，自动处理签名）
 # ============================================================
 
-def _sign(key, msg):
-    return hmac.new(key, msg.encode("utf-8"), hashlib.sha256).digest()
-
-def get_signing_key(secret_key, date_stamp, region, service):
-    k = _sign(("VOLC" + secret_key).encode("utf-8"), date_stamp)
-    k = _sign(k, region)
-    k = _sign(k, service)
-    return _sign(k, "request")
-
-def volc_request(action, version, service, region, body_dict):
-    host       = "open.volcengineapi.com"
-    query      = f"Action={action}&Version={version}"
-    body       = json.dumps(body_dict)
-    body_hash  = hashlib.sha256(body.encode()).hexdigest()
-    now        = datetime.datetime.utcnow()
-    x_date     = now.strftime("%Y%m%dT%H%M%SZ")
-    date_stamp = now.strftime("%Y%m%d")
-
-    # content-type 不放进 signed_headers（与火山引擎官方示例一致）
-    canonical_headers = (
-        f"host:{host}\n"
-        f"x-content-sha256:{body_hash}\n"
-        f"x-date:{x_date}\n"
+def make_ark_service():
+    service_info = ServiceInfo(
+        "open.volcengineapi.com",
+        {"Content-Type": "application/json"},
+        Credentials(VOLC_AK, VOLC_SK, "ark", "cn-beijing"),
+        10, 10, "https"
     )
-    signed_headers    = "host;x-content-sha256;x-date"
-    canonical_request = f"POST\n/\n{query}\n{canonical_headers}\n{signed_headers}\n{body_hash}"
-    credential_scope  = f"{date_stamp}/{region}/{service}/request"
-    string_to_sign    = (
-        f"HMAC-SHA256\n{x_date}\n{credential_scope}\n"
-        + hashlib.sha256(canonical_request.encode()).hexdigest()
-    )
-    signing_key = get_signing_key(VOLC_SK, date_stamp, region, service)
-    signature   = hmac.new(signing_key, string_to_sign.encode(), hashlib.sha256).hexdigest()
-
-    headers = {
-        "Content-Type":     "application/json",
-        "Host":             host,
-        "X-Content-Sha256": body_hash,
-        "X-Date":           x_date,
-        "Authorization": (
-            f"HMAC-SHA256 Credential={VOLC_AK}/{credential_scope}, "
-            f"SignedHeaders={signed_headers}, Signature={signature}"
-        ),
+    api_info = {
+        "GetInferenceUsage": ApiInfo(
+            "POST", "/",
+            {"Action": "GetInferenceUsage", "Version": "2024-01-01"},
+            {}, {}
+        )
     }
-    resp = requests.post(f"https://{host}?{query}", headers=headers, data=body, timeout=30)
-    resp.raise_for_status()
-    return resp.json()
+    return Service(service_info, api_info)
+
+def make_billing_service():
+    service_info = ServiceInfo(
+        "open.volcengineapi.com",
+        {"Content-Type": "application/json"},
+        Credentials(VOLC_AK, VOLC_SK, "billing", "cn-north-1"),
+        10, 10, "https"
+    )
+    api_info = {
+        "ListBillOverviewByProd": ApiInfo(
+            "POST", "/",
+            {"Action": "ListBillOverviewByProd", "Version": "2022-01-01"},
+            {}, {}
+        )
+    }
+    return Service(service_info, api_info)
 
 # ============================================================
 # 数据抓取
 # ============================================================
 
-def fetch_ep_usage(ep_id, start_date, end_date):
-    result = volc_request("GetInferenceUsage", "2024-01-01", "ark", "cn-beijing", {
+def fetch_ep_usage(ark_svc, ep_id, start_date, end_date):
+    body = {
         "QueryInterval": "Day",
         "StartTime":     start_date,
         "EndTime":       end_date,
         "Filters": [{"Key": "ModelEndpoint", "Values": [ep_id]}],
-    })
-    return result.get("Result", {})
+    }
+    resp = ark_svc.json("GetInferenceUsage", {}, json.dumps(body))
+    if isinstance(resp, str):
+        resp = json.loads(resp)
+    return resp.get("Result", {})
 
-def fetch_billing(bill_period):
+def fetch_billing(bill_svc, bill_period):
     try:
-        result = volc_request("ListBillOverviewByProd", "2022-01-01", "billing", "cn-north-1", {
-            "BillPeriod": bill_period, "Limit": 100, "Offset": 0,
-        })
-        items = result.get("Result", {}).get("List", [])
+        body = {"BillPeriod": bill_period, "Limit": 100, "Offset": 0}
+        resp = bill_svc.json("ListBillOverviewByProd", {}, json.dumps(body))
+        if isinstance(resp, str):
+            resp = json.loads(resp)
+        items = resp.get("Result", {}).get("List", [])
         return round(sum(float(i.get("PayableAmount", 0)) for i in items), 2)
     except Exception as e:
         print(f"  账单查询失败: {e}")
         return None
 
 def collect_all_data(target_date):
-    end  = (datetime.date.fromisoformat(target_date) + datetime.timedelta(days=1)).isoformat()
+    ark_svc = make_ark_service()
+    end = (datetime.date.fromisoformat(target_date) + datetime.timedelta(days=1)).isoformat()
     rows = []
     for ep_id, meta in ENDPOINTS.items():
         try:
-            usage  = fetch_ep_usage(ep_id, target_date, end)
+            usage  = fetch_ep_usage(ark_svc, ep_id, target_date, end)
             fields = [f["Name"] for f in usage.get("Fields", [])]
             t      = {"InputTokens": 0, "OutputTokens": 0, "TotalTokens": 0, "ReqCnt": 0, "ImageCount": 0}
             for row in usage.get("Data", []):
                 d = dict(zip(fields, row))
                 for k in t:
                     t[k] += int(d.get(k, 0) or 0)
-            row_data = {
+            rows.append({
                 **meta, "ep_id": ep_id,
                 "input_tokens":  t["InputTokens"],
                 "output_tokens": t["OutputTokens"],
                 "total_tokens":  t["TotalTokens"],
                 "req_cnt":       t["ReqCnt"],
                 "image_count":   t["ImageCount"],
-            }
-            rows.append(row_data)
+            })
             print(f"  ✓ {meta['name']}({meta['app']}): {t['TotalTokens']:,} tokens, {t['ReqCnt']} 次, {t['ImageCount']} 张")
         except Exception as e:
             print(f"  ✗ {ep_id} 失败: {e}")
-            rows.append({**meta, "ep_id": ep_id, "input_tokens": 0, "output_tokens": 0,
+            rows.append({**meta, "ep_id": ep_id,
+                         "input_tokens": 0, "output_tokens": 0,
                          "total_tokens": 0, "req_cnt": 0, "image_count": 0})
     return rows
 
@@ -180,19 +183,16 @@ def format_report(date_str, rows, billing):
     wd  = ["周一","周二","周三","周四","周五","周六","周日"][datetime.date.fromisoformat(date_str).weekday()]
     day = datetime.date.fromisoformat(date_str).strftime("%Y/%m/%d")
 
-    total_tokens = sum(r["total_tokens"] for r in rows)
-    total_calls  = sum(r["req_cnt"] for r in rows)
-    total_images = sum(r["image_count"] for r in rows)
     active = [r for r in rows if r["total_tokens"] > 0 or r["req_cnt"] > 0 or r["image_count"] > 0]
 
     lines = [
         f"🔥 火山方舟用量日报  {day}（{wd}）",
         "─" * 34,
-        f"📊 今日汇总",
-        f"   💎 Token总量：{total_tokens:,}",
-        f"   📞 调用次数：{total_calls:,}",
-        f"   🖼 生图/帧数：{total_images:,}",
-        f"   💸 本月花费：{'¥' + f'{billing:,.2f}' if billing is not None else '查询失败'}",
+        "📊 今日汇总",
+        f"   💎 Token总量：{sum(r['total_tokens'] for r in rows):,}",
+        f"   📞 调用次数：{sum(r['req_cnt'] for r in rows):,}",
+        f"   🖼 生图/帧数：{sum(r['image_count'] for r in rows):,}",
+        f"   💸 本月花费：{'¥' + f\"{billing:,.2f}\" if billing is not None else '查询失败'}",
         "",
         "📌 接入点明细",
         f"{'模型(应用)':<30} {'输入Token':>12} {'输出Token':>12} {'总Token':>12} {'调用':>6} {'生图':>6}",
@@ -275,7 +275,8 @@ def main():
     rows = collect_all_data(target)
 
     print("\n💰 查询账单...")
-    billing = fetch_billing(bill_period)
+    bill_svc = make_billing_service()
+    billing  = fetch_billing(bill_svc, bill_period)
     print(f"  本月花费: ¥{billing}" if billing is not None else "  账单查询失败")
 
     report = format_report(target, rows, billing)
