@@ -1,0 +1,34 @@
+name: 火山方舟每日用量报告
+
+on:
+  schedule:
+    # 每天北京时间 09:00 运行（UTC+8，所以 UTC 01:00）
+    - cron: '0 1 * * *'
+  workflow_dispatch:  # 也可以手动触发
+
+jobs:
+  daily-report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装依赖
+        run: pip install requests
+
+      - name: 运行日报脚本
+        env:
+          # 在 GitHub 仓库 Settings → Secrets → Actions 里添加这些变量
+          VOLC_AK:            ${{ secrets.VOLC_AK }}
+          VOLC_SK:            ${{ secrets.VOLC_SK }}
+          DINGTALK_WEBHOOK:   ${{ secrets.DINGTALK_WEBHOOK }}
+          DINGTALK_SECRET:    ${{ secrets.DINGTALK_SECRET }}
+          DINGTALK_APP_KEY:   ${{ secrets.DINGTALK_APP_KEY }}
+          DINGTALK_APP_SECRET: ${{ secrets.DINGTALK_APP_SECRET }}
+        run: python volcengine_daily_report.py
