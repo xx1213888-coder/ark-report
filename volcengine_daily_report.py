@@ -70,13 +70,13 @@ def volc_request(action, version, service, region, body_dict):
     x_date     = now.strftime("%Y%m%dT%H%M%SZ")
     date_stamp = now.strftime("%Y%m%d")
 
+    # content-type 不放进 signed_headers（与火山引擎官方示例一致）
     canonical_headers = (
-        f"content-type:application/json\n"
         f"host:{host}\n"
         f"x-content-sha256:{body_hash}\n"
         f"x-date:{x_date}\n"
     )
-    signed_headers    = "content-type;host;x-content-sha256;x-date"
+    signed_headers    = "host;x-content-sha256;x-date"
     canonical_request = f"POST\n/\n{query}\n{canonical_headers}\n{signed_headers}\n{body_hash}"
     credential_scope  = f"{date_stamp}/{region}/{service}/request"
     string_to_sign    = (
