@@ -1,0 +1,35 @@
+name: 火山方舟用量日报
+
+on:
+  schedule:
+    # 北京时间每天 9:00 → UTC 1:00
+    - cron: '0 1 * * *'
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests openpyxl
+
+      - name: Run report
+        env:
+          VOLC_AK: ${{ secrets.VOLC_AK }}
+          VOLC_SK: ${{ secrets.VOLC_SK }}
+          DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
+          DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
+          DINGTALK_APP_KEY: ${{ secrets.DINGTALK_APP_KEY }}
+          DINGTALK_APP_SECRET: ${{ secrets.DINGTALK_APP_SECRET }}
+          BITABLE_WEBHOOK: ${{ secrets.BITABLE_WEBHOOK }}
+          API16_USER: ${{ secrets.API16_USER }}
+          API16_PASS: ${{ secrets.API16_PASS }}
+        run: python3 volc_ark_report.py
