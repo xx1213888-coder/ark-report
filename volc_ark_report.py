@@ -802,9 +802,12 @@ def main():
     else:
         print("   无数据或查询失败")
 
-    # ── 4. 存 CSV + 生成日报推钉钉 ──
-    print("\n📄 保存日报 CSV...")
-    save_daily_csv(target_date, rows, rows_16api, billing, ark_billing, prev_billing, prev_ark, api16_billing)
+    # ── 4. 存 CSV（仅本地） + 生成日报推钉钉 ──
+    if os.getenv("GITHUB_ACTIONS") == "true":
+        print("\n📄 GitHub Actions 环境，跳过 CSV 保存。")
+    else:
+        print("\n📄 保存日报 CSV...")
+        save_daily_csv(target_date, rows, rows_16api, billing, ark_billing, prev_billing, prev_ark, api16_billing)
 
     print("\n📨 发送钉钉群消息...")
 
