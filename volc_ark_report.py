@@ -836,7 +836,7 @@ def main():
     # ── 5. 写入多维表格（Webhook 方式） ──
     if BITABLE_WEBHOOK:
         print("\n📋 写入钉钉多维表格...")
-        write_to_bitable_webhook(date_str, rows, billing, ark_billing, prev_billing, prev_ark, rows_16api, api16_billing)
+        write_to_bitable_webhook(target_date, rows, billing, ark_billing, prev_billing, prev_ark, rows_16api, api16_billing)
     else:
         print("\n📋 未配置 BITABLE_WEBHOOK，跳过表格写入。")
 
