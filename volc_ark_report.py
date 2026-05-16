@@ -356,10 +356,10 @@ def fetch_16api_usage(target_date):
         ts_str = datetime.fromtimestamp(item["created_at"], tz=tz).strftime("%H:%M:%S")
         other_raw = item.get("other", "{}")
         try:
-            other = json.loads(other_raw)
+            other = json.loads(other_raw) or {}  # ← 修复：json.loads("null") 返回 None，加 or {} 兜底
         except:
             other = {}
-        has_retry = other is not None and ("used_channels" in other or "retry_count" in other)
+        has_retry = "used_channels" in other or "retry_count" in other
         img_out = other.get("image_output", "?")
         retry = other.get("retry_count", "?")
         itok = item.get("input_tokens") or item.get("prompt_tokens") or 0
@@ -401,7 +401,7 @@ def fetch_16api_usage(target_date):
 
         for e in entries:
             try:
-                other = json.loads(e.get("other", "{}"))
+                other = json.loads(e.get("other", "{}")) or {}  # ← 修复：同上
             except:
                 other = {}
             has_retry = "used_channels" in other or "retry_count" in other
@@ -836,7 +836,7 @@ def main():
     # ── 5. 写入多维表格（Webhook 方式） ──
     if BITABLE_WEBHOOK:
         print("\n📋 写入钉钉多维表格...")
-        write_to_bitable_webhook(target_date, rows, billing, ark_billing, prev_billing, prev_ark, rows_16api, api16_billing)
+        write_to_bitable_webhook(date_str, rows, billing, ark_billing, prev_billing, prev_ark, rows_16api, api16_billing)
     else:
         print("\n📋 未配置 BITABLE_WEBHOOK，跳过表格写入。")
 
