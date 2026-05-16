@@ -359,7 +359,7 @@ def fetch_16api_usage(target_date):
             other = json.loads(other_raw)
         except:
             other = {}
-        has_retry = "used_channels" in other or "retry_count" in other
+        has_retry = other is not None and ("used_channels" in other or "retry_count" in other)
         img_out = other.get("image_output", "?")
         retry = other.get("retry_count", "?")
         itok = item.get("input_tokens") or item.get("prompt_tokens") or 0
